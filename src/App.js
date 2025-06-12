@@ -32,14 +32,7 @@ const CurrencyProvider = ({ children }) => {
 const useCurrency = () => useContext(CurrencyContext);
 
 // --- FIREBASE CONFIG ---
-const firebaseConfig = {
-  apiKey: "AIzaSyCS1ol3os3HimJm4YoQf_FQS3JDcMhQTxg",
-  authDomain: "quantfolio-1d06a.firebaseapp.com",
-  projectId: "quantfolio-1d06a",
-  storageBucket: "quantfolio-1d06a.firebasestorage.app",
-  messagingSenderId: "400704139093",
-  appId: "1:400704139093:web:3a14d197ff2a68082a09dc"
-}; = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 // --- Custom Logo ---
