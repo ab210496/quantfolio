@@ -9,12 +9,12 @@ import { Plus, Edit, Trash2, TrendingUp, ArrowDown, DollarSign, BrainCircuit, Bo
 const CurrencyContext = createContext();
 const USD_INR_RATE = 83.50; 
 const firebaseConfig = {
-  apiKey: "AIzaSyDSeUmqsgB4uziI6YVH9-crQnpkjjtjCos",
-  authDomain: "quantfolio-9124f.firebaseapp.com",
-  projectId: "quantfolio-9124f",
-  storageBucket: "quantfolio-9124f.firebasestorage.app",
-  messagingSenderId: "472800413541",
-  appId: "1:472800413541:web:4ab24621e2c14d82ba438c"
+    apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+    authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+    storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+    appId: process.env.REACT_APP_FIREBASE_APP_ID
 };
 
 // Initialize Firebase
