@@ -18,6 +18,9 @@ const firebaseConfig = {
 };
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+
 const CurrencyProvider = ({ children }) => {
     const [currency, setCurrency] = useState('INR'); 
     const toggleCurrency = () => setCurrency(curr => (curr === 'INR' ? 'USD' : 'INR'));
