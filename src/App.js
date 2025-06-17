@@ -32,7 +32,7 @@ const CurrencyProvider = ({ children }) => {
 const useCurrency = () => useContext(CurrencyContext);
 
 // --- FIREBASE CONFIG ---
-import { initializeApp } from "firebase/app";
+
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
