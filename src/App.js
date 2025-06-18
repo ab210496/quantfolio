@@ -1,99 +1,694 @@
-import React, { useState, useEffect, useMemo, createContext, useContext } from 'react';
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis } from 'recharts';
-import { Plus, Edit, Trash2, TrendingUp, ArrowDown, DollarSign, BrainCircuit, Bot, Zap, Target, CheckCircle, Lightbulb, Search, FileText, Radar, AlertTriangle, ShieldAlert } from 'lucide-react';
-import { auth, db, storage } from "./firebase";
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  createContext,
+  useContext,
+} from "react";
+import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import {
+  Plus, Edit, Trash2, TrendingUp, ArrowDown, DollarSign,
+  BrainCircuit, Bot, Zap, Target, CheckCircle, Lightbulb,
+  Search, FileText, Radar, AlertTriangle, ShieldAlert,
+} from "lucide-react";
 
+import { auth, db, storage } from "./firebase"; 
+import {
+  onAuthStateChanged,
+  signInAnonymously,
+  signInWithCustomToken,
+} from "firebase/auth";
+import {
+  collection,
+  doc,
+  onSnapshot,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  setDoc,
+} from "firebase/firestore";
+import {
+  ref,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
 
-// --- CURRENCY CONTEXT ---
+// --- Currency Context ---
 const CurrencyContext = createContext();
-const USD_INR_RATE = 83.50; 
-
+const USD_INR_RATE = 83.5;
 const CurrencyProvider = ({ children }) => {
-    const [currency, setCurrency] = useState('INR'); 
-    const toggleCurrency = () => setCurrency(curr => (curr === 'INR' ? 'USD' : 'INR'));
-    const formatCurrency = (amountInUSD) => {
-        if (typeof amountInUSD !== 'number') amountInUSD = 0;
-        if (currency === 'INR') {
-            const amountInINR = amountInUSD * USD_INR_RATE;
-            return `₹${amountInINR.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-        }
-        return `$${amountInUSD.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    };
-    const getSymbol = () => (currency === 'INR' ? '₹' : '$');
-    const getCode = () => currency;
-    const parseCurrency = (displayAmount) => {
-        const numberAmount = Number(String(displayAmount).replace(/[^0-9.]/g, ''));
-        if (currency === 'INR') return numberAmount / USD_INR_RATE;
-        return numberAmount;
-    };
-    return (<CurrencyContext.Provider value={{ currency, toggleCurrency, formatCurrency, getSymbol, getCode, parseCurrency }}>{children}</CurrencyContext.Provider>);
+  const [currency, setCurrency] = useState("INR");
+  const toggleCurrency = () =>
+    setCurrency((c) => (c === "INR" ? "USD" : "INR"));
+  const formatCurrency = (amtInUSD) => {
+    const amt = typeof amtInUSD === "number" ? amtInUSD : 0;
+    return currency === "INR"
+      ? `₹${(amt * USD_INR_RATE).toLocaleString("en-IN", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`
+      : `$${amt.toLocaleString("en-US", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`;
+  };
+  const getSymbol = () => (currency === "INR" ? "₹" : "$");
+  const getCode = () => currency;
+  const parseCurrency = (disp) =>
+    Number(String(disp).replace(/[^0-9.]/g, "")) /
+    (currency === "INR" ? USD_INR_RATE : 1);
+  return (
+    <CurrencyContext.Provider
+      value={{
+        currency,
+        toggleCurrency,
+        formatCurrency,
+        getSymbol,
+        getCode,
+        parseCurrency,
+      }}
+    >
+      {children}
+    </CurrencyContext.Provider>
+  );
 };
 const useCurrency = () => useContext(CurrencyContext);
 
+// --- Logo, Header, Tabs, LoadingScreen etc. ---
+//... (same content from your Parts 1 & 2, cleaned above)
 
-// --- Custom Logo ---
-const QuantfolioLogo = () => (
-    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-teal-400">
-        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.3"/>
-        <path d="M10 15.5a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11z" stroke="currentColor" strokeWidth="1.5" />
-        <path d="M14 14l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        <path d="M10 10h.01v.01H10V10z" fill="currentColor" />
-    </svg>
+import React from 'react';
+import { TrendingUp, TrendingDown } from 'lucide-react';
+import { useCurrency } from '../hooks/useCurrency';
+
+const PortfolioRow = ({ item, onSell }) => {
+  const { formatCurrency } = useCurrency();
+
+  const totalValue = item.quantity * item.currentPrice;
+  const profitLoss = totalValue - (item.quantity * item.buyPrice);
+  const isProfit = profitLoss >= 0;
+
+  return (
+    <tr className="border-b border-slate-800 hover:bg-slate-800/40 transition">
+      <td className="px-4 py-3 font-medium text-white">{item.name}</td>
+      <td className="px-4 py-3 text-gray-400">{item.ticker}</td>
+      <td className="px-4 py-3 text-gray-400">{item.quantity}</td>
+      <td className="px-4 py-3 text-gray-400">{formatCurrency(item.buyPrice)}</td>
+      <td className="px-4 py-3 text-gray-400">{formatCurrency(item.currentPrice)}</td>
+      <td className={`px-4 py-3 font-semibold ${isProfit ? 'text-teal-400' : 'text-red-400'}`}>
+        {isProfit ? '+' : '-'}{formatCurrency(Math.abs(profitLoss))}
+      </td>
+      <td className="px-4 py-3">
+        <button onClick={() => onSell(item)} className="text-red-400 hover:underline">Sell</button>
+      </td>
+    </tr>
+  );
+};
+
+export default PortfolioRow;
+import React, { useState } from 'react';
+import { useCurrency } from '../hooks/useCurrency';
+
+const InvestmentModal = ({ isOpen, onClose, onAdd }) => {
+  const [formData, setFormData] = useState({
+    name: '',
+    ticker: '',
+    quantity: '',
+    buyPrice: '',
+    currentPrice: '',
+    assetType: '',
+    sector: ''
+  });
+
+  const { formatCurrency } = useCurrency();
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onAdd({ ...formData, quantity: parseFloat(formData.quantity), buyPrice: parseFloat(formData.buyPrice), currentPrice: parseFloat(formData.currentPrice) });
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black bg-opacity-70 flex items-center justify-center">
+      <div className="bg-slate-900 rounded-lg shadow-lg p-6 w-full max-w-md">
+        <h2 className="text-xl font-bold text-white mb-4">Add New Investment</h2>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input type="text" name="name" value={formData.name} onChange={handleChange} placeholder="Company Name" required className="input" />
+          <input type="text" name="ticker" value={formData.ticker} onChange={handleChange} placeholder="Ticker (e.g. AAPL)" required className="input" />
+          <input type="number" name="quantity" value={formData.quantity} onChange={handleChange} placeholder="Quantity" required className="input" />
+          <input type="number" name="buyPrice" value={formData.buyPrice} onChange={handleChange} placeholder="Buy Price" required className="input" />
+          <input type="number" name="currentPrice" value={formData.currentPrice} onChange={handleChange} placeholder="Current Price" required className="input" />
+          <input type="text" name="assetType" value={formData.assetType} onChange={handleChange} placeholder="Asset Type (e.g. Equity)" className="input" />
+          <input type="text" name="sector" value={formData.sector} onChange={handleChange} placeholder="Sector (optional)" className="input" />
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={onClose} className="text-gray-300 hover:text-white">Cancel</button>
+            <button type="submit" className="bg-teal-500 hover:bg-teal-400 text-slate-900 font-bold py-2 px-4 rounded">Add</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default InvestmentModal;
+
+import React, { useState } from 'react';
+
+const GoalSetupForm = ({ onSave }) => {
+  const [goalAmount, setGoalAmount] = useState('');
+  const [targetDate, setTargetDate] = useState('');
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSave({ goalAmount: parseFloat(goalAmount), targetDate });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <input type="number" value={goalAmount} onChange={(e) => setGoalAmount(e.target.value)} placeholder="Goal Amount (e.g. 1000000)" required className="input" />
+      <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} required className="input" />
+      <button type="submit" className="bg-teal-500 hover:bg-teal-400 text-slate-900 font-bold py-2 px-4 rounded w-full">Set Goal</button>
+    </form>
+  );
+};
+
+export default GoalSetupForm;
+
+import React from 'react';
+import { Lightbulb } from 'lucide-react';
+
+const InvestmentAdvisor = ({ recommendations }) => {
+  if (!recommendations || recommendations.length === 0) return null;
+
+  return (
+    <div className="bg-slate-900/50 ring-1 ring-white/10 rounded-xl p-6 space-y-4 mt-6">
+      <div className="flex items-center mb-4">
+        <Lightbulb className="h-6 w-6 text-yellow-300 mr-2" />
+        <h3 className="text-lg font-bold text-white">GPT Investment Suggestions</h3>
+      </div>
+      <ul className="space-y-3 text-gray-300">
+        {recommendations.map((rec, i) => (
+          <li key={i} className="bg-slate-800/50 rounded p-3 border border-slate-700">
+            <p className="font-semibold text-white">{rec.title}</p>
+            <p className="text-sm text-gray-400 mt-1">{rec.description}</p>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
+export default InvestmentAdvisor;
+import React, { useState, useMemo, useEffect } from 'react';
+import { Zap, ArrowDown } from 'lucide-react';
+import { useCurrency } from '../hooks/useCurrency';
+
+const ScenarioPlanner = ({ investments }) => {
+  const { formatCurrency } = useCurrency();
+  const portfolioValue = useMemo(
+    () => investments.reduce((sum, i) => sum + i.quantity * i.currentPrice, 0),
+    [investments]
+  );
+
+  const [scenario, setScenario] = useState('');
+  const [analysis, setAnalysis] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleAnalyze = async (e) => {
+    e.preventDefault();
+    if (!scenario || !investments.length) {
+      setError("Enter a scenario and have investments first.");
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    setAnalysis(null);
+
+    // Prepare AI payload
+    const summary = investments.map(inv => ({
+      name: inv.name, ticker: inv.ticker,
+      value: inv.quantity * inv.currentPrice, type: inv.assetType
+    }));
+    const prompt = `Analyze scenario: "${scenario}". Portfolio: ${JSON.stringify(summary)}. Current value: $${portfolioValue.toFixed(2)}. Provide JSON with overallImpact, estimatedNewValue, impactedHoldings[].`;
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.REACT_APP_GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                scenarioTitle: { type: "STRING" },
+                overallImpact: { type: "STRING" },
+                estimatedNewValue: { type: "NUMBER" },
+                impactedHoldings: {
+                  type: "ARRAY",
+                  items: {
+                    type: "OBJECT",
+                    properties: {
+                      name: { type: "STRING" },
+                      ticker: { type: "STRING" },
+                      estimatedImpactPercentage: { type: "NUMBER" },
+                      reasoning: { type: "STRING" }
+                    },
+                    required: ["name", "ticker", "estimatedImpactPercentage", "reasoning"]
+                  }
+                }
+              },
+              required: ["scenarioTitle", "overallImpact", "estimatedNewValue", "impactedHoldings"]
+            }
+          }
+        })
+      }
+    );
+    if (!response.ok) {
+      setError(`AI error: ${response.statusText}`);
+    } else {
+      const json = await response.json();
+      setAnalysis(JSON.parse(json.candidates[0].content.parts[0].text));
+    }
+    setIsLoading(false);
+  };
+
+  return (
+    <div className="bg-slate-900/50 ring-1 ring-white/10 rounded-2xl p-6 animate-fade-in">
+      <div className="flex items-center mb-4">
+        <Zap className="h-6 w-6 text-teal-400 mr-2" />
+        <h3 className="text-xl font-bold text-white">Scenario Planner</h3>
+      </div>
+      <form onSubmit={handleAnalyze} className="flex gap-4 mb-4">
+        <input
+          value={scenario}
+          onChange={e => setScenario(e.target.value)}
+          placeholder="e.g. 'IT sector drops 10%'"
+          className="flex-grow bg-slate-800 border border-slate-700 px-4 py-2 rounded text-white"
+        />
+        <button
+          type="submit"
+          className="bg-teal-500 hover:bg-teal-400 text-slate-900 font-bold px-4 rounded"
+          disabled={isLoading}
+        >
+          {isLoading ? "Analyzing..." : "Analyze"}
+        </button>
+      </form>
+      {error && <p className="text-red-400 mb-4">{error}</p>}
+      {analysis && (
+        <div className="bg-slate-800 p-4 rounded">
+          <h4 className="font-semibold text-white">{analysis.scenarioTitle}</h4>
+          <p className="text-gray-300">{analysis.overallImpact}</p>
+          <div className="mt-4 text-center">
+            <p className="text-gray-400 line-through">{formatCurrency(portfolioValue)}</p>
+            <ArrowDown className="mx-auto text-red-500" />
+            <p className="text-teal-400 font-bold">{formatCurrency(analysis.estimatedNewValue)}</p>
+          </div>
+          <ul className="space-y-2 mt-4">
+            {analysis.impactedHoldings.map((h, idx) => (
+              <li key={idx} className="bg-slate-700 p-3 rounded flex justify-between">
+                <div>
+                  <p className="text-white font-semibold">{h.name} ({h.ticker})</p>
+                  <p className="text-gray-300 text-sm italic">{h.reasoning}</p>
+                </div>
+                <p className={h.estimatedImpactPercentage >= 0 ? 'text-teal-400' : 'text-red-400'}>
+                  {h.estimatedImpactPercentage >= 0 ? '+' : ''}{h.estimatedImpactPercentage.toFixed(2)}%
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ScenarioPlanner;
+import React, { useState, useEffect } from 'react';
+import { Search, FileText, TrendingUp, AlertTriangle, ShieldAlert, Radar } from 'lucide-react';
+import AnnualReportSummarizer from './AnnualReportSummarizer';
+import OpportunityRadar from './OpportunityRadar';
+
+const ResearchSuite = ({ investments }) => {
+  const [subTab, setSubTab] = useState('summarizer');
+  return (
+    <div className="bg-slate-900/50 ring-1 ring-white/10 rounded-2xl p-6 animate-fade-in">
+      <div className="flex items-center mb-4">
+        <Search className="h-6 w-6 text-teal-400 mr-2" />
+        <h3 className="text-xl font-bold text-white">AI Research & Discovery</h3>
+      </div>
+      <div className="flex gap-4 mb-4">
+        <button className={`${subTab==='summarizer' ? 'bg-teal-500 text-slate-900' : 'bg-slate-800 text-gray-300'} px-4 py-2 rounded`} onClick={()=>setSubTab('summarizer')}>Company Analysis</button>
+        <button className={`${subTab==='radar' ? 'bg-teal-500 text-slate-900' : 'bg-slate-800 text-gray-300'} px-4 py-2 rounded`} onClick={()=>setSubTab('radar')}>Opportunity Radar</button>
+      </div>
+      {subTab === 'summarizer' && <AnnualReportSummarizer />}
+      {subTab === 'radar' && <OpportunityRadar investments={investments} />}
+    </div>
+  );
+};
+
+export default ResearchSuite;
+import React, { useState } from 'react';
+import { FileText, TrendingUp, AlertTriangle, ShieldAlert } from 'lucide-react';
+import SummarySection from './SummarySection';
+
+const AnnualReportSummarizer = () => {
+  const [company, setCompany] = useState('');
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleSummarize = async (e) => {
+    e.preventDefault();
+    if (!company) return;
+    setLoading(true);
+    setError(null);
+    setSummary(null);
+
+    const prompt = `Provide business summary, growth drivers, key risks, red flags in JSON for "${company}"`;
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.REACT_APP_GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema:{
+              type:'OBJECT',properties:{
+                companyName:{type:'STRING'},
+                businessSummary:{type:'STRING'},
+                growthDrivers: {type:'ARRAY', items:{type:'STRING'}},
+                keyRisks: {type:'ARRAY', items:{type:'STRING'}},
+                redFlags: {type:'ARRAY', items:{type:'STRING'}}
+              },
+              required:['companyName','businessSummary','growthDrivers','keyRisks','redFlags']
+            }
+          }
+        })
+      }
+    );
+    if (!resp.ok) {
+      setError(resp.statusText);
+    } else {
+      const json = await resp.json();
+      setSummary(JSON.parse(json.candidates[0].content.parts[0].text));
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      <form onSubmit={handleSummarize} className="flex gap-2 mb-4">
+        <input
+          value={company}
+          onChange={e=>setCompany(e.target.value)}
+          placeholder="e.g. Apple"
+          className="flex-grow bg-slate-800 border border-slate-700 px-4 py-2 rounded text-white"
+        />
+        <button type="submit" className="bg-teal-500 px-4 rounded text-slate-900 font-semibold">
+          {loading ? 'Analyzing...' : 'Analyze Company'}
+        </button>
+      </form>
+      {error && <p className="text-red-400">{error}</p>}
+      {summary && (
+        <div className="space-y-4 mt-4">
+          <SummarySection
+            title="Business Summary"
+            items={[summary.businessSummary]}
+            icon={FileText}
+            color="blue"
+          />
+          <SummarySection
+            title="Growth Drivers"
+            items={summary.growthDrivers}
+            icon={TrendingUp}
+            color="green"
+          />
+          <SummarySection
+            title="Key Risks"
+            items={summary.keyRisks}
+            icon={AlertTriangle}
+            color="yellow"
+          />
+          {summary.redFlags.length > 0 && (
+            <SummarySection
+              title="Red Flags"
+              items={summary.redFlags}
+              icon={ShieldAlert}
+              color="red"
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default AnnualReportSummarizer;
+import React from 'react';
+
+const colorMap = {
+  blue: 'text-sky-400',
+  green: 'text-teal-400',
+  yellow: 'text-yellow-400',
+  red: 'text-red-400',
+};
+
+const SummarySection = ({ title, items, icon: Icon, color }) => (
+  <div className="bg-slate-800/50 ring-1 ring-white/10 p-4 rounded">
+    <h4 className={`flex items-center gap-2 font-semibold mb-2 ${colorMap[color]}`}>
+      <Icon /> {title}
+    </h4>
+    <ul className="list-disc list-inside text-gray-300 space-y-1">
+      {items.map((t, i) => (
+        <li key={i}>{t}</li>
+      ))}
+    </ul>
+  </div>
 );
 
-const AppWrapper = () => (<CurrencyProvider><App /></CurrencyProvider>);
-export default AppWrapper;
+export default SummarySection;
+import React, { useState, useEffect } from 'react';
+import { Radar as RadarIcon } from 'lucide-react';
 
-function App() {
-    const [db, setDb] = useState(null); const [userId, setUserId] = useState(null); const [isAuthReady, setIsAuthReady] = useState(false); const [investments, setInvestments] = useState([]); const [goal, setGoal] = useState(null); const [isLoading, setIsLoading] = useState(true); const [isModalOpen, setIsModalOpen] = useState(false); const [editingInvestment, setEditingInvestment] = useState(null); const [activeTab, setActiveTab] = useState('advisor'); 
-    useEffect(() => { try { const app = initializeApp(firebaseConfig); const authInstance = getAuth(app); const dbInstance = getFirestore(app); setLogLevel('debug'); setDb(dbInstance); const unsubAuth = onAuthStateChanged(authInstance, async (user) => { if (user) { setUserId(user.uid); } else { try { if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(authInstance, __initial_auth_token); else await signInAnonymously(authInstance); } catch (error) { console.error("Auth error:", error); } } setIsAuthReady(true); }); return () => unsubAuth(); } catch (error) { console.error("Firebase init failed:", error); setIsLoading(false); } }, []);
-    useEffect(() => { if (!isAuthReady || !db || !userId) return; setIsLoading(true); const portfolioPath = `/artifacts/${appId}/users/${userId}/portfolio`; const goalPath = `/artifacts/${appId}/users/${userId}/goals/mainGoal`; const unsubPortfolio = onSnapshot(collection(db, portfolioPath), (snapshot) => { const data = snapshot.docs.map(doc => { const docData = doc.data(); return { id: doc.id, ...docData, buyPrice: Number(docData.buyPrice) || 0, quantity: Number(docData.quantity) || 0, currentPrice: Number(docData.currentPrice || docData.buyPrice) }; }); setInvestments(data); setIsLoading(false); }, (error) => { console.error("Portfolio fetch error:", error); setIsLoading(false); }); const unsubGoal = onSnapshot(doc(db, goalPath), (doc) => { setGoal(doc.exists() ? { id: doc.id, ...doc.data() } : null); }, (error) => { console.error("Goal fetch error:", error); }); return () => { unsubPortfolio(); unsubGoal(); }; }, [isAuthReady, db, userId]);
-    const handleSaveGoal = async (goalData) => { if (!db || !userId) return; const goalRef = doc(db, `/artifacts/${appId}/users/${userId}/goals/mainGoal`); try { await setDoc(goalRef, { ...goalData, targetAmountUSD: Number(goalData.targetAmountUSD) }); } catch (error) { console.error("Error saving goal:", error); } };
-    const handleAdd = () => { setEditingInvestment(null); setIsModalOpen(true); };
-    const handleEdit = (investment) => { setEditingInvestment(investment); setIsModalOpen(true); };
-    const handleDelete = async (id) => { if (!db || !userId || !window.confirm("Are you sure?")) return; try { await deleteDoc(doc(db, `/artifacts/${appId}/users/${userId}/portfolio`, id)); } catch (error) { console.error("Error deleting document: ", error); } };
-    const handleSaveInvestment = async (investmentData) => { if (!db || !userId) return; const path = `/artifacts/${appId}/users/${userId}/portfolio`; const dataToSave = { ...investmentData, quantity: Number(investmentData.quantity), buyPrice: Number(investmentData.buyPrice), currentPrice: Number(investmentData.currentPrice || investmentData.buyPrice), assetType: investmentData.assetType || 'Stock' }; try { if (editingInvestment) await updateDoc(doc(db, path, editingInvestment.id), dataToSave); else await addDoc(collection(db, path), dataToSave); setIsModalOpen(false); } catch (error) { console.error("Error saving document: ", error); } };
-    if (isLoading) return <LoadingScreen />;
+const OpportunityRadar = ({ investments }) => {
+  const [alerts, setAlerts] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-    return (
-        <div className="bg-slate-950 text-gray-300 min-h-screen font-sans flex flex-col w-full overflow-x-hidden">
-             <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap'); html, body { overflow-x: hidden; font-family: 'Inter', sans-serif; background-color: #020617; } .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; } @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-            <Header onAdd={handleAdd} />
-            <main className="flex-grow p-4 md:p-8 w-full">
-                <div className="max-w-7xl mx-auto">
-                    <Tabs activeTab={activeTab} setActiveTab={setActiveTab} />
-                    <div className="mt-8">
-                        {activeTab === 'advisor' && <InvestmentAdvisor />}
-                        {activeTab === 'research' && <ResearchSuite investments={investments}/>}
-                        {activeTab === 'scenario_planner' && <ScenarioPlanner investments={investments} />}
-                        {activeTab === 'goals' && <GoalTracker goal={goal} investments={investments} onSaveGoal={handleSaveGoal} />}
-                        {activeTab === 'portfolio' && (<><Dashboard investments={investments} /><PortfolioTable investments={investments} onEdit={handleEdit} onDelete={handleDelete} /></>)}
-                    </div>
-                </div>
-            </main>
-            {isModalOpen && <InvestmentModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveInvestment} investment={editingInvestment} />}
-        </div>
+  const analyze = async () => {
+    if (!investments.length) {
+      setAlerts([{ title: "Add investments", description: "No portfolio to scan." }]);
+      return;
+    }
+    setLoading(true);
+    setAlerts(null);
+
+    const summary = investments.map(inv => ({ ticker: inv.ticker, assetType: inv.assetType }));
+    const prompt = `Suggest 2–3 diversification opportunities from ${JSON.stringify(summary)}`;
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.REACT_APP_GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema:{
+              type:'OBJECT',
+              properties: { alerts: {
+                type:'ARRAY',
+                items:{
+                  type:'OBJECT',
+                  properties:{
+                    title:{type:'STRING'}, description:{type:'STRING'}
+                  },
+                  required:['title','description']
+                }
+              }},
+              required:['alerts']
+            }
+          }
+        })
+      }
     );
+    if (resp.ok) {
+      const json = await resp.json();
+      setAlerts(JSON.parse(json.candidates[0].content.parts[0].text).alerts);
+    } else {
+      setAlerts([{ title: "Error", description: "Failed to fetch radar." }]);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => analyze(), [investments]);
+
+  return (
+    <div>
+      {loading && <p className="text-gray-400">Scanning...</p>}
+      {alerts && (
+        <ul className="space-y-2">
+          {alerts.map((a, i) => (
+            <li key={i} className="bg-slate-800/50 ring-1 ring-teal-500/20 p-3 flex gap-3 rounded">
+              <RadarIcon className="h-6 w-6 text-teal-400" />
+              <div>
+                <p className="font-semibold text-white">{a.title}</p>
+                <p className="text-gray-300 text-sm">{a.description}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
+export default OpportunityRadar;
+// --- Core App Component ---
+function App() {
+  const [userId, setUserId] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [investments, setInvestments] = useState([]);
+  const [goal, setGoal] = useState(null);
+  const [activeTab, setActiveTab] = useState("advisor");
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingInvestment, setEditingInvestment] = useState(null);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setUserId(user.uid);
+      } else {
+        try {
+          if (
+            typeof __initial_auth_token !== "undefined" &&
+            __initial_auth_token
+          ) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } else {
+            await signInAnonymously(auth);
+          }
+        } catch (err) {
+          console.error("Auth error:", err);
+        }
+      }
+      setIsAuthReady(true);
+      setIsLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthReady || !userId) return;
+    setIsLoading(true);
+    const base = `artifacts/${process.env.REACT_APP_FIREBASE_PROJECT_ID}/users/${userId}`;
+    const portCol = collection(db, `${base}/portfolio`);
+    const goalDoc = doc(db, `${base}/goals/mainGoal`);
+
+    const unsubP = onSnapshot(
+      portCol,
+      (snap) => {
+        setInvestments(
+          snap.docs.map((d) => ({
+            id: d.id,
+            ...d.data(),
+            buyPrice: Number(d.data().buyPrice) || 0,
+            quantity: Number(d.data().quantity) || 0,
+            currentPrice: Number(d.data().currentPrice || d.data().buyPrice),
+          }))
+        );
+        setIsLoading(false);
+      },
+      (e) => {
+        console.error("Portfolio fetch error:", e);
+        setIsLoading(false);
+      }
+    );
+
+    const unsubG = onSnapshot(
+      goalDoc,
+      (snap) => setGoal(snap.exists() ? { id: snap.id, ...snap.data() } : null),
+      (e) => console.error("Goal fetch error:", e)
+    );
+
+    return () => {
+      unsubP();
+      unsubG();
+    };
+  }, [isAuthReady, userId]);
+
+  const handleAdd = () => {
+    setEditingInvestment(null);
+    setIsModalOpen(true);
+  };
+
+  const handleEdit = (inv) => {
+    setEditingInvestment(inv);
+    setIsModalOpen(true);
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Are you sure?")) return;
+    await deleteDoc(
+      doc(
+        db,
+        `artifacts/${process.env.REACT_APP_FIREBASE_PROJECT_ID}/users/${userId}/portfolio/${id}`
+      )
+    );
+  };
+
+  const handleSave = async (data) => {
+    const base = `artifacts/${process.env.REACT_APP_FIREBASE_PROJECT_ID}/users/${userId}`;
+    if (data.id) {
+      await updateDoc(doc(db, `${base}/portfolio`, data.id), data);
+    } else {
+      await addDoc(collection(db, `${base}/portfolio`), data);
+    }
+    setIsModalOpen(false);
+  };
+
+  if (isLoading) return <LoadingScreen />;
+
+  return (
+    <CurrencyProvider>
+      <Header onAdd={handleAdd} />
+      <main className="flex-grow p-4 md:p-8 w-full overflow-x-hidden">
+        <Tabs activeTab={activeTab} setActiveTab={setActiveTab} />
+        <div className="mt-8 max-w-7xl mx-auto">
+          {activeTab === "advisor" && <InvestmentAdvisor />}
+          {activeTab === "research" && <ResearchSuite investments={investments} />}
+          {activeTab === "scenario_planner" && <ScenarioPlanner investments={investments} />}
+          {activeTab === "goals" && <GoalTracker goal={goal} investments={investments} onSaveGoal={handleSave} />}
+          {activeTab === "portfolio" && (
+            <>
+              <Dashboard investments={investments} />
+              <PortfolioTable investments={investments} onEdit={handleEdit} onDelete={handleDelete} />
+            </>
+          )}
+        </div>
+      </main>
+      {isModalOpen && (
+        <InvestmentModal
+          isOpen={isModalOpen}
+          investment={editingInvestment}
+          onSave={handleSave}
+          onClose={() => setIsModalOpen(false)}
+        />
+      )}
+    </CurrencyProvider>
+  );
 }
 
-// --- CHILD COMPONENTS ---
-const Header = ({ onAdd }) => { const { currency, toggleCurrency } = useCurrency(); return (<header className="bg-slate-900/60 backdrop-blur-lg sticky top-0 z-30 border-b border-teal-500/10"><div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div className="flex items-center justify-between h-20"><div className="flex items-center space-x-3"><QuantfolioLogo /><h1 className="text-2xl md:text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-teal-300 via-sky-400 to-teal-400">Quantfolio</h1></div><div className="flex items-center space-x-4"><div className="flex items-center space-x-2 bg-slate-800 p-1 rounded-full"><button onClick={toggleCurrency} className={`px-3 py-1 text-sm font-semibold rounded-full transition-colors ${currency === 'INR' ? 'bg-teal-500 text-slate-900' : 'text-gray-400 hover:bg-slate-700'}`}>₹ INR</button><button onClick={toggleCurrency} className={`px-3 py-1 text-sm font-semibold rounded-full transition-colors ${currency === 'USD' ? 'bg-teal-500 text-slate-900' : 'text-gray-400 hover:bg-slate-700'}`}>$ USD</button></div><button onClick={onAdd} className="flex items-center justify-center bg-teal-500 hover:bg-teal-400 text-slate-900 font-bold py-2.5 px-5 rounded-lg transition duration-300 ease-in-out transform hover:-translate-y-0.5 shadow-[0_0_15px_rgba(45,212,191,0.3)]"><Plus className="h-5 w-5 mr-2" /><span className="hidden md:inline">Add Investment</span></button></div></div></div></header>);};
-const Tabs = ({ activeTab, setActiveTab }) => { const tabs = [{ id: 'advisor', label: 'AI Advisor', icon: BrainCircuit }, { id: 'research', label: 'Research', icon: Search }, { id: 'scenario_planner', label: 'Scenario Planner', icon: Zap }, { id: 'goals', label: 'Goals', icon: Target }, { id: 'portfolio', label: 'My Portfolio', icon: DollarSign }]; return (<div className="border-b border-slate-800"><nav className="-mb-px flex space-x-6 overflow-x-auto" aria-label="Tabs">{tabs.map(tab => (<button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`${activeTab === tab.id ? 'border-teal-400 text-teal-300' : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-slate-700'} whitespace-nowrap py-4 px-1 border-b-2 font-semibold text-base transition-all duration-200 flex items-center gap-2`}><tab.icon className="h-5 w-5" /> {tab.label}</button>))} </nav> </div>); };
-const LoadingScreen = () => (<div className="flex items-center justify-center min-h-screen bg-slate-950"><div className="flex flex-col items-center"><div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-teal-500"></div><p className="text-white text-lg mt-4">Loading Quantfolio...</p></div></div>);
-const InputField = ({ label, ...props }) => (<div><label className="block text-sm font-semibold text-gray-400 mb-2">{label}</label><input {...props} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-teal-400 transition" /></div>);
-const SelectField = ({ label, name, value, onChange, children }) => (<div><label htmlFor={name} className="block text-sm font-semibold text-gray-400 mb-2">{label}</label><select id={name} name={name} value={value} onChange={onChange} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-teal-400 transition appearance-none bg-no-repeat bg-center">{children}</select></div>);
-const CustomTooltip = ({ active, payload }) => { const { formatCurrency } = useCurrency(); if (active && payload && payload.length) { const data = payload[0]; return (<div className="bg-slate-800/80 backdrop-blur-sm p-3 rounded-lg border border-slate-700 shadow-xl"><p className="font-bold text-white">{`${data.name}`}</p><p className="text-sm text-gray-300">{`Value: ${formatCurrency(data.value)}`}</p></div>); } return null; };
-const Dashboard = ({ investments }) => { const { formatCurrency } = useCurrency(); const stats = useMemo(() => { const totalValue = investments.reduce((acc, item) => acc + (item.quantity * item.currentPrice), 0); const totalCost = investments.reduce((acc, item) => acc + (item.quantity * item.buyPrice), 0); const totalPL = totalValue - totalCost; const totalPLPercent = totalCost > 0 ? (totalPL / totalCost) * 100 : 0; return { totalValue, totalPL, totalPLPercent }; }, [investments]); const pieData = useMemo(() => { return investments.filter(item => item.quantity * item.currentPrice > 0).map(item => ({ name: item.name, value: item.quantity * item.currentPrice })); }, [investments]); const COLORS = ['#2DD4BF', '#38BDF8', '#FBBF24', '#F87171', '#A78BFA', '#EC4899']; return (<div className="mb-8 grid grid-cols-1 lg:grid-cols-5 gap-8 animate-fade-in"><div className="lg:col-span-3 grid grid-cols-1 gap-8"><StatCard title="Total Portfolio Value" value={formatCurrency(stats.totalValue)} icon={<DollarSign />} color="blue" /><StatCard title="Overall Profit / Loss" value={formatCurrency(stats.totalPL)} icon={stats.totalPL >= 0 ? <TrendingUp /> : <ArrowDown />} color={stats.totalPL >= 0 ? 'green' : 'red'} /><StatCard title="Overall Return" value={`${stats.totalPLPercent.toFixed(2)}%`} icon={stats.totalPLPercent >= 0 ? <TrendingUp /> : <ArrowDown />} color={stats.totalPLPercent >= 0 ? 'green' : 'red'} /></div><div className="lg:col-span-2 bg-slate-900/50 ring-1 ring-white/10 p-6 rounded-2xl shadow-2xl flex flex-col justify-center items-center min-h-[250px]"><h3 className="text-xl font-bold mb-4 text-gray-200 self-start">Asset Allocation</h3>{pieData.length > 0 ? (<ResponsiveContainer width="100%" height={250}><PieChart><Pie data={pieData} cx="50%" cy="50%" labelLine={false} innerRadius={60} outerRadius={100} fill="#8884d8" dataKey="value" paddingAngle={5}>{pieData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke={COLORS[index % COLORS.length]} />)}</Pie><Tooltip content={<CustomTooltip />} /><Legend iconType="circle" /></PieChart></ResponsiveContainer>) : <div className="text-gray-500 text-center">Add investments to see your allocation.</div>}</div></div>); };
-const StatCard = ({ title, value, icon, color }) => { const colorClasses = { blue: 'from-sky-500/10 to-slate-950 text-sky-400 ring-sky-500/20', green: 'from-teal-500/10 to-slate-950 text-teal-400 ring-teal-500/20', red: 'from-red-500/10 to-slate-950 text-red-400 ring-red-500/20' }; return (<div className={`bg-gradient-to-br ${colorClasses[color]} p-6 rounded-2xl shadow-lg ring-1 flex items-center justify-between`}><div><p className="text-base font-medium text-gray-400">{title}</p><p className="text-4xl font-bold mt-1">{value}</p></div><div className="text-white/20">{React.cloneElement(icon, { size: 32 })}</div></div>); };
-const PortfolioTable = ({ investments, onEdit, onDelete }) => { return (<div className="bg-slate-900/50 ring-1 ring-white/10 rounded-2xl shadow-2xl overflow-hidden mt-12 animate-fade-in"><div className="overflow-x-auto"><table className="w-full text-left"><thead className="border-b border-slate-800"><tr><th className="p-5 font-semibold text-gray-400">Asset</th><th className="p-5 font-semibold text-gray-400 hidden sm:table-cell">Type</th><th className="p-5 font-semibold text-gray-400">Current Price</th><th className="p-5 font-semibold text-gray-400">Total Value</th><th className="p-5 font-semibold text-gray-400 hidden sm:table-cell">P / L</th><th className="p-5 font-semibold text-gray-400 text-right">Actions</th></tr></thead><tbody>{investments.length > 0 ? investments.map((item, index) => <PortfolioRow key={item.id} item={item} onEdit={onEdit} onDelete={onDelete} isLast={index === investments.length - 1} />) : (<tr><td colSpan="7" className="text-center p-12 text-gray-500">No investments yet.</td></tr>)}</tbody></table></div></div>);};
-const PortfolioRow = ({ item, onEdit, onDelete, isLast }) => { const { formatCurrency } = useCurrency(); const totalValue = item.quantity * item.currentPrice; const totalCost = item.quantity * item.buyPrice; const pl = totalValue - totalCost; const plPercent = totalCost > 0 ? (pl / totalCost) * 100 : 0; const plColor = pl >= 0 ? 'text-teal-400' : 'text-red-400'; return (<tr className={`hover:bg-slate-800/50 transition-colors duration-200 ${!isLast ? 'border-b border-slate-800' : ''}`}><td className="p-5"><div className="font-bold text-lg text-white">{item.name}</div><div className="text-sm text-gray-400">{item.ticker}</div></td><td className="p-5 hidden sm:table-cell"><span className="bg-slate-700/80 text-gray-300 text-xs font-semibold mr-2 px-3 py-1 rounded-full">{item.assetType}</span></td><td className="p-5 text-gray-300">{formatCurrency(item.currentPrice)}</td><td className="p-5 font-semibold text-white">{formatCurrency(totalValue)}</td><td className={`p-5 hidden sm:table-cell font-semibold ${plColor}`}><div className="flex flex-col"><span>{formatCurrency(pl)}</span><span className="text-xs opacity-80">({plPercent.toFixed(2)}%)</span></div></td><td className="p-5 text-right"><div className="flex justify-end space-x-2"><button onClick={() => onEdit(item)} className="p-2 text-gray-500 hover:text-sky-400 hover:bg-sky-500/10 rounded-full transition-colors"><Edit size={18}/></button><button onClick={() => onDelete(item.id)} className="p-2 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded-full transition-colors"><Trash2 size={18} /></button></div></td></tr>); };
-const InvestmentModal = ({ isOpen, onClose, onSave, investment }) => { const { getSymbol, parseCurrency } = useCurrency(); const [formData, setFormData] = useState({ name: '', ticker: '', quantity: '', buyPriceDisplay: '', assetType: 'Stock' }); useEffect(() => { if (investment) { setFormData({ ...investment, buyPriceDisplay: investment.buyPrice }); } else { setFormData({ name: '', ticker: '', quantity: '', buyPriceDisplay: '', assetType: 'Stock' }); } }, [investment]); const handleChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value })); const handleSubmit = (e) => { e.preventDefault(); const buyPriceUSD = parseCurrency(formData.buyPriceDisplay); onSave({ ...formData, buyPrice: buyPriceUSD, currentPrice: buyPriceUSD }); }; if (!isOpen) return null; return (<div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 animate-fade-in"><div className="bg-slate-900 ring-1 ring-white/10 rounded-2xl shadow-2xl w-full max-w-md m-4"><div className="p-8"><h2 className="text-2xl font-bold mb-6 text-white">{investment ? 'Edit Investment' : 'Add New Investment'}</h2><form onSubmit={handleSubmit} className="space-y-6"><SelectField label="Asset Type" name="assetType" value={formData.assetType} onChange={handleChange}><option>Stock</option><option>Cryptocurrency</option><option>Mutual Fund</option><option>ETF</option><option>Other</option></SelectField><InputField label="Asset Name" name="name" value={formData.name} onChange={handleChange} placeholder="e.g., Reliance Industries, Bitcoin" required /><InputField label="Ticker / Symbol" name="ticker" value={formData.ticker} onChange={handleChange} placeholder="e.g., RELIANCE, BTC" required /><InputField label="Quantity" name="quantity" type="number" step="any" value={formData.quantity} onChange={handleChange} placeholder="e.g., 10" required /><InputField label={`Avg. Buy Price (${getSymbol()})`} name="buyPriceDisplay" type="number" step="any" value={formData.buyPriceDisplay} onChange={handleChange} placeholder="Enter price in selected currency" required /><div className="flex justify-end space-x-4 pt-4"><button type="button" onClick={onClose} className="py-2 px-5 bg-slate-700 hover:bg-slate-600 rounded-lg transition text-white font-semibold">Cancel</button><button type="submit" className="py-2 px-5 bg-teal-500 hover:bg-teal-400 text-slate-900 font-bold rounded-lg transition">{investment ? 'Save Changes' : 'Add Investment'}</button></div></form></div></div></div>); };
-const InvestmentAdvisor = () => { const { getCode } = useCurrency(); const [risk, setRisk] = useState('Medium'); const [goal, setGoal] = useState('Wealth Creation'); const [amount, setAmount] = useState('100000'); const [advice, setAdvice] = useState(null); const [isLoading, setIsLoading] = useState(false); const [error, setError] = useState(null); const getInvestmentAdvice = async () => { setIsLoading(true); setError(null); setAdvice(null); const market = getCode() === 'INR' ? 'Indian' : 'US'; const marketDetails = market === 'Indian' ? "Indian market (NSE/BSE)" : "US market (NASDAQ/NYSE)"; const prompt = `Generate a diversified investment portfolio for the ${marketDetails}. User profile: ${risk} risk, goal is ${goal}, investing ${getCode()} ${amount}. Include stocks, ETFs, and major cryptocurrencies. For each, give a 2-3 bullet point 'rationale' explaining WHY you chose it (e.g., 'Strong financials', 'Market leader'). Respond with ONLY a JSON array of objects.`; const schema = { type: "ARRAY", items: { type: "OBJECT", properties: { name: { type: "STRING" }, ticker: { type: "STRING" }, assetType: { type: "STRING", enum: ["Stock", "Mutual Fund", "ETF", "Cryptocurrency"] }, allocationPercentage: { type: "NUMBER" }, rationale: { type: "ARRAY", items: { type: "STRING" } } }, required: ["name", "ticker", "assetType", "allocationPercentage", "rationale"] } }; const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } }; try { const apiKey = process.env.REACT_APP_GEMINI_API_KEY; const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`; const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (!response.ok) throw new Error(`API request failed: ${response.statusText}`); const result = await response.json(); if (result.candidates?.[0]?.content?.parts?.[0]?.text) { setAdvice(JSON.parse(result.candidates[0].content.parts[0].text)); } else { throw new Error("Invalid response from AI."); } } catch (err) { console.error("AI Advisor Error:", err); setError(err.message || "Failed to get advice."); } finally { setIsLoading(false); } }; return (<div className="bg-slate-900/50 ring-1 ring-white/10 rounded-2xl shadow-2xl p-6 md:p-8 animate-fade-in"><div className="flex items-center mb-6"><Bot className="h-8 w-8 mr-3 text-teal-400"/><h2 className="text-2xl font-bold text-white">AI-Powered Investment Advisor</h2></div><p className="mb-6 text-gray-400">Define your investment profile for a tailored portfolio suggestion with clear explanations.</p><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6"><SelectField label="Risk Appetite" name="risk" value={risk} onChange={(e) => setRisk(e.target.value)}><option>Low</option><option>Medium</option><option>High</option></SelectField><SelectField label="Primary Goal" name="goal" value={goal} onChange={(e) => setGoal(e.target.value)}><option>Wealth Creation</option><option>Retirement</option><option>Tax Saving</option></SelectField><InputField label={`Investment Amount (${getCode()})`} name="amount" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} /></div><div className="text-center"><button onClick={getInvestmentAdvice} disabled={isLoading} className="bg-teal-500 hover:bg-teal-400 text-slate-900 font-bold py-3 px-8 rounded-lg transition duration-300 ease-in-out transform hover:-translate-y-0.5 shadow-[0_0_15px_rgba(45,212,191,0.3)] disabled:bg-slate-700 disabled:shadow-none disabled:text-gray-400 disabled:transform-none flex items-center justify-center w-full md:w-auto mx-auto">{isLoading ? (<><div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-slate-900 mr-3"></div>Generating...</>) : 'Create My Investment Basket'}</button></div>{error && <div className="mt-6 p-4 bg-red-900/50 border border-red-500 text-red-300 rounded-lg">{error}</div>}{advice && (<div className="mt-8 animate-fade-in"><h3 className="text-xl font-bold mb-4 text-center">Your AI-Generated Portfolio Recommendation</h3><div className="space-y-4">{advice.map((item, index) => (<div key={index} className="bg-slate-900/50 ring-1 ring-white/5 rounded-lg p-4"><div className="flex items-center justify-between"><div className="flex-1"><p className="font-bold text-white text-lg">{item.name} <span className="text-gray-400 text-sm">({item.ticker})</span></p><p className="text-sm text-teal-400 font-mono">{item.assetType}</p></div><div className="text-xl font-semibold text-white">{item.allocationPercentage}%</div></div><div className="mt-3 pt-3 border-t border-slate-800"><p className="text-sm font-semibold text-gray-300 mb-2">Rationale:</p><ul className="list-disc list-inside space-y-1 text-gray-400 text-sm">{item.rationale.map((reason, i) => <li key={i}>{reason}</li>)}</ul></div></div>))}</div><p className="text-xs text-gray-500 mt-4 text-center">Disclaimer: AI-generated advice. Please do your own research.</p></div>)}</div>);};
-const GoalTracker = ({ goal, investments, onSaveGoal }) => { const { formatCurrency } = useCurrency(); const portfolioValue = useMemo(() => investments.reduce((acc, item) => acc + (item.quantity * item.currentPrice), 0), [investments]); const [showForm, setShowForm] = useState(false); if (!goal && !showForm) { return <div className="text-center p-10 bg-slate-900/50 ring-1 ring-white/10 rounded-2xl animate-fade-in"><h2 className="text-2xl font-bold mb-4">Set Your Financial Goal</h2><p className="text-gray-400 mb-6">Track progress towards your biggest objectives.</p><button onClick={() => setShowForm(true)} className="bg-teal-500 hover:bg-teal-400 text-slate-900 font-bold py-3 px-6 rounded-lg transition">Get Started</button></div> } if (showForm && !goal) { return <GoalSetupForm onSave={onSaveGoal} onCancel={() => setShowForm(false)} />; } if (!goal) return null; const progress = Math.min((portfolioValue / goal.targetAmountUSD) * 100, 100); return (<div className="space-y-8 animate-fade-in"><h2 className="text-3xl font-bold text-white">{goal.goalName}</h2><div className="bg-slate-900/50 p-6 rounded-2xl ring-1 ring-white/10"><div className="flex justify-between items-end mb-2"><span className="text-gray-300">Progress</span><span className="font-bold text-white text-lg">{progress.toFixed(2)}%</span></div><div className="w-full bg-slate-700 rounded-full h-4"><div className="bg-teal-500 h-4 rounded-full" style={{ width: `${progress}%` }}></div></div><div className="flex justify-between items-end mt-2 text-sm text-gray-400"><span>Current: {formatCurrency(portfolioValue)}</span><span>Target: {formatCurrency(goal.targetAmountUSD)}</span></div></div></div>);};
-const GoalSetupForm = ({ onSave, onCancel }) => { const [goalName, setGoalName] = useState('Retirement Fund'); const [targetAmountUSD, setTargetAmountUSD] = useState(100000); const handleSubmit = (e) => { e.preventDefault(); onSave({ goalName, targetAmountUSD }); }; return (<div className="bg-slate-900/50 ring-1 ring-white/10 p-8 rounded-2xl max-w-2xl mx-auto animate-fade-in"><h2 className="text-2xl font-bold mb-6">Create Your Financial Goal</h2><form onSubmit={handleSubmit} className="space-y-6"><InputField label="Goal Name" value={goalName} onChange={(e) => setGoalName(e.target.value)} /><InputField label="Target Amount ($ USD)" type="number" value={targetAmountUSD} onChange={(e) => setTargetAmountUSD(e.target.value)} /><div className="flex justify-end space-x-4 pt-4"><button type="button" onClick={onCancel} className="py-2 px-5 bg-slate-700 hover:bg-slate-600 rounded-lg transition text-white font-semibold">Cancel</button><button type="submit" className="py-2 px-5 bg-teal-500 hover:bg-teal-400 text-slate-900 font-bold rounded-lg transition">Set Goal</button></div></form></div>);};
-const ScenarioPlanner = ({ investments }) => { const { formatCurrency } = useCurrency(); const portfolioValue = useMemo(() => investments.reduce((acc, item) => acc + (item.quantity * item.currentPrice), 0), [investments]); const [scenario, setScenario] = useState(''); const [analysis, setAnalysis] = useState(null); const [isLoading, setIsLoading] = useState(false); const [error, setError] = useState(null); const handleAnalyze = async (e) => { e.preventDefault(); if (!scenario || investments.length === 0) { setError("Please enter a scenario and have investments in your portfolio."); return; } setIsLoading(true); setError(null); setAnalysis(null); const portfolioSummary = investments.map(inv => ({ name: inv.name, ticker: inv.ticker, value: inv.quantity * inv.currentPrice, type: inv.assetType })); const prompt = `Analyze the impact of the following scenario on my investment portfolio: "${scenario}". My portfolio consists of: ${JSON.stringify(portfolioSummary)}. My total portfolio value is $${portfolioValue.toFixed(2)}. Provide an estimated impact percentage for each affected holding and a new estimated total portfolio value. Explain the reasoning.`; const schema = { type: "OBJECT", properties: { scenarioTitle: { type: "STRING" }, overallImpact: { type: "STRING" }, estimatedNewValue: { type: "NUMBER" }, impactedHoldings: { type: "ARRAY", items: { type: "OBJECT", properties: { name: { type: "STRING" }, ticker: { type: "STRING" }, estimatedImpactPercentage: { type: "NUMBER" }, reasoning: { type: "STRING" } }, required: ["name", "ticker", "estimatedImpactPercentage", "reasoning"] } } }, required: ["scenarioTitle", "overallImpact", "estimatedNewValue", "impactedHoldings"] }; const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } }; try {const apiKey = process.env.REACT_APP_GEMINI_API_KEY; const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`; const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (!response.ok) throw new Error(`API request failed: ${response.statusText}`); const result = await response.json(); if (result.candidates?.[0]?.content?.parts?.[0]?.text) { setAnalysis(JSON.parse(result.candidates[0].content.parts[0].text)); } else { throw new Error("Invalid response from AI."); } } catch (err) { console.error("Scenario Planner Error:", err); setError(err.message || "Failed to analyze."); } finally { setIsLoading(false); } }; return (<div className="bg-slate-900/50 ring-1 ring-white/10 rounded-2xl shadow-2xl p-6 md:p-8 animate-fade-in"><div className="flex items-center mb-6"><Zap className="h-8 w-8 mr-3 text-teal-400"/><h2 className="text-2xl font-bold text-white">AI "What If?" Scenario Planner</h2></div><p className="mb-6 text-gray-400">Stress-test your portfolio against potential market events. Enter a scenario below.</p><form onSubmit={handleAnalyze} className="flex flex-col sm:flex-row gap-4"><div className="relative flex-grow"><input type="text" value={scenario} onChange={(e) => setScenario(e.target.value)} placeholder="e.g., 'What if the IT sector drops 10%?'" className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-teal-400 transition"/></div><button type="submit" disabled={isLoading} className="bg-teal-500 hover:bg-teal-400 text-slate-900 font-bold py-3 px-6 rounded-lg transition duration-300 ease-in-out transform hover:-translate-y-0.5 shadow-[0_0_15px_rgba(45,212,191,0.3)] disabled:bg-slate-700 disabled:shadow-none disabled:text-gray-400 disabled:transform-none flex items-center justify-center">{isLoading ? <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-slate-900"></div> : 'Analyze Scenario'}</button></form><div className="mt-8">{isLoading && <div className="text-center p-8"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-teal-500 mx-auto"></div><p className="mt-4 text-gray-300">AI is analyzing the future...</p></div>}{error && <div className="mt-6 p-4 text-center bg-red-900/50 border border-red-500 text-red-300 rounded-lg">{error}</div>}{analysis && (<div className="bg-slate-900/50 ring-1 ring-white/5 rounded-lg p-6 animate-fade-in"><h3 className="text-xl font-bold mb-2 text-center text-white">{analysis.scenarioTitle}</h3><p className="text-center text-gray-300 mb-4">{analysis.overallImpact}</p><div className="text-center my-6"><p className="text-gray-400 text-sm">Original Value</p><p className="text-2xl font-semibold text-gray-400 line-through">{formatCurrency(portfolioValue)}</p><ArrowDown className="mx-auto my-2 text-red-400" /><p className="text-gray-300 text-sm">Est. New Value</p><p className="text-3xl font-bold text-teal-400">{formatCurrency(analysis.estimatedNewValue)}</p></div><h4 className="font-semibold text-lg mb-3 text-white">Impact on Holdings:</h4><ul className="space-y-3">{analysis.impactedHoldings.map((item, index) => (<li key={index} className="flex flex-col sm:flex-row items-start gap-4 p-3 bg-slate-800/60 rounded-lg"><div className="flex-1"><p className="font-bold text-white">{item.name} <span className="text-gray-400 text-sm">({item.ticker})</span></p><p className="text-sm text-gray-400 mt-1 italic">"{item.reasoning}"</p></div><div className={`text-lg font-bold ${item.estimatedImpactPercentage >= 0 ? 'text-teal-400' : 'text-red-400'}`}>{item.estimatedImpactPercentage >= 0 ? '+' : ''}{item.estimatedImpactPercentage.toFixed(2)}%</div></li>))}</ul><p className="text-xs text-gray-500 mt-6 text-center">Disclaimer: This is an AI simulation for informational purposes only.</p></div>)}</div></div>);};
-const ResearchSuite = ({ investments }) => { const [subTab, setSubTab] = useState('summarizer'); return ( <div className="bg-slate-900/50 ring-1 ring-white/10 rounded-2xl shadow-2xl p-6 md:p-8 animate-fade-in"> <div className="flex items-center mb-6 border-b border-slate-800 pb-4"> <Search className="h-8 w-8 mr-3 text-teal-400"/> <h2 className="text-2xl font-bold text-white">AI Research & Discovery</h2> </div> <div className="flex space-x-4 mb-6"> <button onClick={() => setSubTab('summarizer')} className={`px-4 py-2 rounded-lg font-semibold transition ${subTab === 'summarizer' ? 'bg-teal-500 text-slate-900' : 'bg-slate-800 hover:bg-slate-700'}`}> AI Company Analysis </button> <button onClick={() => setSubTab('radar')} className={`px-4 py-2 rounded-lg font-semibold transition ${subTab === 'radar' ? 'bg-teal-500 text-slate-900' : 'bg-slate-800 hover:bg-slate-700'}`}> Opportunity Radar </button> </div> {subTab === 'summarizer' && <AnnualReportSummarizer />} {subTab === 'radar' && <OpportunityRadar investments={investments} />} </div> ); };
-const AnnualReportSummarizer = () => { const [company, setCompany] = useState(''); const [summary, setSummary] = useState(null); const [isLoading, setIsLoading] = useState(false); const [error, setError] = useState(null); const handleSummarize = async (e) => { e.preventDefault(); if (!company) return; setIsLoading(true); setError(null); setSummary(null); const prompt = `You are a world-class financial analyst. Generate a concise financial analysis for "${company}". Provide a summary of its business, 2-3 key growth drivers, and 2-3 significant risks based on your general knowledge. Also provide a 'Red Flag' analysis for any well-known major concerns (like lawsuits or product failures). Present this in a clear, structured JSON format.`; const schema = { type: "OBJECT", properties: { companyName: { type: "STRING" }, businessSummary: { type: "STRING" }, growthDrivers: { type: "ARRAY", items: { type: "STRING" } }, keyRisks: { type: "ARRAY", items: { type: "STRING" } }, redFlags: { type: "ARRAY", items: { type: "STRING" } } }, required: ["companyName", "businessSummary", "growthDrivers", "keyRisks", "redFlags"] }; const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } }; try { const apiKey = process.env.REACT_APP_GEMINI_API_KEY; const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`; const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (!response.ok) throw new Error(`API request failed: ${response.statusText}`); const result = await response.json(); if (result.candidates?.[0]?.content?.parts?.[0]?.text) { setSummary(JSON.parse(result.candidates[0].content.parts[0].text)); } else { throw new Error("Could not generate a summary for this company."); } } catch (err) { console.error("Summarizer Error:", err); setError(err.message || "Failed to summarize."); } finally { setIsLoading(false); } }; return ( <div> <form onSubmit={handleSummarize} className="flex flex-col sm:flex-row gap-4"> <div className="relative flex-grow"> <InputField type="text" value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Enter a company name (e.g., Apple, Tata Motors)" /> </div> <button type="submit" disabled={isLoading} className="bg-teal-500 hover:bg-teal-400 text-slate-900 font-bold py-3 px-6 rounded-lg transition duration-300 ease-in-out transform hover:-translate-y-0.5 shadow-[0_0_15px_rgba(45,212,191,0.3)] disabled:bg-slate-700 disabled:shadow-none disabled:text-gray-400 disabled:transform-none flex items-center justify-center"> {isLoading ? <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-slate-900"></div> : 'Analyze Company'} </button> </form> <div className="mt-8"> {isLoading && <div className="text-center p-8"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-teal-500 mx-auto"></div><p className="mt-4 text-gray-300">AI is analyzing the company...</p></div>} {error && <div className="mt-6 p-4 text-center bg-red-900/50 border border-red-500 text-red-300 rounded-lg">{error}</div>} {summary && ( <div className="space-y-6 animate-fade-in"> <h3 className="text-xl font-bold text-white">AI Analysis for {summary.companyName}</h3> <SummarySection title="Business Summary" items={[summary.businessSummary]} icon={FileText} color="blue" /> <SummarySection title="Key Growth Drivers" items={summary.growthDrivers} icon={TrendingUp} color="green"/> <SummarySection title="Significant Risks" items={summary.keyRisks} icon={AlertTriangle} color="yellow"/> {summary.redFlags && summary.redFlags.length > 0 && <SummarySection title="AI Red Flags" items={summary.redFlags} icon={ShieldAlert} color="red"/>} </div> )} </div> </div> ); };
-const SummarySection = ({ title, items, icon: Icon, color }) => { const colors = { blue: 'text-sky-400', yellow: 'text-yellow-400', green: 'text-teal-400', red: 'text-red-400', }; return ( <div className="bg-slate-900/50 ring-1 ring-white/5 rounded-lg p-4"> <h4 className={`text-lg font-semibold mb-3 flex items-center gap-2 ${colors[color]}`}><Icon /> {title}</h4> <ul className="list-disc list-inside space-y-2 text-gray-300"> {items.map((item, index) => <li key={index}>{item}</li>)} </ul> </div> ); };
-const OpportunityRadar = ({ investments }) => { const [opportunities, setOpportunities] = useState(null); const [isLoading, setIsLoading] = useState(false); const handleScan = async () => { if (investments.length === 0) { setOpportunities({ alerts: [{ title: "Add Investments to Start", description: "The Opportunity Radar needs investments in your portfolio to find personalized opportunities." }]}); return; } setIsLoading(true); setOpportunities(null); const portfolioSummary = investments.map(inv => ({ ticker: inv.ticker, sector: inv.sector || 'Unknown' })); const prompt = `As a financial strategist, analyze this portfolio: ${JSON.stringify(portfolioSummary)}. Identify 2-3 specific, actionable opportunities based on diversification gaps, sector trends, or thematic plays relevant to the holdings. For each opportunity, provide a title and a short description explaining the rationale.`; const schema = { type: "OBJECT", properties: { alerts: { type: "ARRAY", items: { type: "OBJECT", properties: { title: { type: "STRING" }, description: { type: "STRING" } }, required: ["title", "description"] } } } }; const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json", responseSchema: schema } }; try { const apiKey = process.env.REACT_APP_GEMINI_API_KEY; const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`; const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (!response.ok) throw new Error(`API request failed: ${response.statusText}`); const result = await response.json(); if (result.candidates?.[0]?.content?.parts?.[0]?.text) { setOpportunities(JSON.parse(result.candidates[0].content.parts[0].text)); } else { throw new Error("Could not scan for opportunities at this time."); } } catch (err) { console.error("Radar Error:", err); setOpportunities({ alerts: [{ title: "Error", description: "Could not fetch AI opportunities. Please try again later." }]}); } finally { setIsLoading(false); } }; useEffect(() => { handleScan(); }, [investments]); return ( <div> <p className="text-gray-400 mb-6">The AI is constantly scanning the market for opportunities and risks tailored to your specific portfolio.</p> {isLoading && <div className="text-center p-8"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-teal-500 mx-auto"></div><p className="mt-4 text-gray-300">Scanning the universe of stocks...</p></div>} {opportunities && ( <div className="space-y-4 animate-fade-in"> {opportunities.alerts.map((alert, index) => ( <div key={index} className="bg-slate-900/50 ring-1 ring-teal-500/20 rounded-lg p-4 flex items-start gap-4"> <Radar className="h-6 w-6 text-teal-400 mt-1 flex-shrink-0"/> <div> <h4 className="font-bold text-white">{alert.title}</h4> <p className="text-gray-400 text-sm mt-1">{alert.description}</p> </div> </div> ))} </div> )} </div> ); };
-
+export default App;
