@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, createContext, useContext } from 'react';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { Plus, Edit, Trash2, TrendingUp, ArrowDown, DollarSign, BrainCircuit, Bot, Zap, Target, CheckCircle, Lightbulb, Search, FileText, Radar, AlertTriangle, ShieldAlert } from 'lucide-react';
+import { auth, db, storage } from "./firebase";
+
 
 // --- CURRENCY CONTEXT ---
 const CurrencyContext = createContext();
